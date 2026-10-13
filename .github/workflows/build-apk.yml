@@ -1,60 +1,182 @@
-[preset.0]
+name: Build Velocity Rush 3D APK
 
-name="Android"
-platform="Android"
-runnable=true
-advanced_options=false
-dedicated_server=false
-custom_features=""
-export_filter="all_resources"
-include_filter=""
-exclude_filter=""
-export_path="build/VelocityRush3D.apk"
-patches=PackedStringArray()
-encryption_include_filters=""
-encryption_exclude_filters=""
-seed=0
-encrypt_pck=false
-encrypt_directory=false
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
-[preset.0.options]
+permissions:
+  contents: read
 
-custom_template/debug=""
-custom_template/release=""
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-22.04
+    env:
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+      # JAVA_HOME is provided by actions/setup-java
 
-gradle_build/use_gradle_build=false
-gradle_build/export_format=0
-gradle_build/min_sdk=""
-gradle_build/target_sdk=""
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
 
-architectures/armeabi-v7a=false
-architectures/arm64-v8a=true
-architectures/x86=false
-architectures/x86_64=false
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-version/code=1
-version/name="1.0.0"
+      - name: Prepare Android SDK root dir
+        run: |
+          set -e
+          mkdir -p "$ANDROID_SDK_ROOT"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-package/unique_name="com.velocityrush.game"
-package/name="Velocity Rush 3D"
-package/signed=true
-package/retain_data_on_uninstall=false
-package/exclude_from_recents=false
-package/show_in_android_tv=false
-package/show_in_app_library=true
-package/show_as_launcher_app=false
+      - name: Install Android command line tools and SDK packages
+        run: |
+          set -e
+          # download commandline tools
+          CLI_ZIP=commandlinetools.zip
+          wget -q "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip" -O $CLI_ZIP
+          unzip -q $CLI_ZIP -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          # move to 'latest' so sdkmanager path is stable
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/"* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          # install typical packages
+          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses
 
-launcher_icons/main_192x192=""
-launcher_icons/adaptive_foreground_432x432=""
-launcher_icons/adaptive_background_432x432=""
-launcher_icons/adaptive_monochrome_432x432=""
+      - name: Add platform-tools to PATH for adb (optional)
+        run: |
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
-graphics/opengl_debug=false
+      - name: Download Godot 4.4.1
+        run: |
+          set -e
+          wget -q \
+            "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip" \
+            -O godot.zip
+          unzip -q godot.zip -d godot-bin
+          chmod +x godot-bin/Godot_v4.4.1-stable_linux.x86_64
 
-xr_features/xr_mode=0
+      - name: Install Godot export templates
+        run: |
+          set -e
+          wget -q \
+            "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_export_templates.tpz" \
+            -O godot-templates.tpz
+          mkdir -p /tmp/godot-templates
+          unzip -q godot-templates.tpz -d /tmp/godot-templates
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.4.1.stable"
+          cp -a /tmp/godot-templates/templates/. "$HOME/.local/share/godot/export_templates/4.4.1.stable/"
 
-screen/immersive_mode=true
-screen/support_small=true
-screen/support_normal=true
-screen/support_large=true
-screen/support_xlarge=true
+      - name: Create Android debug keystore
+        run: |
+          set -e
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000
+
+      - name: Configure Godot Android paths (editor settings)
+        run: |
+          set -e
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "${ANDROID_SDK_ROOT}"
+          export/android/java_sdk_path = "${JAVA_HOME}"
+          export/android/debug_keystore = "$HOME/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+
+          # Also write editor_settings-4.4.tres to cover Godot's versioned filename
+          cat > "$HOME/.config/godot/editor_settings-4.4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "${ANDROID_SDK_ROOT}"
+          export/android/java_sdk_path = "${JAVA_HOME}"
+          export/android/debug_keystore = "$HOME/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+
+      - name: Validate Godot project (headless)
+        run: |
+          set -e
+          GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
+          "$GODOT" --headless --editor --path . --quit
+
+      - name: Inspect export_presets.cfg and available export platforms
+        run: |
+          set -e
+          echo "========== export_presets.cfg =========="
+          if [ -f export_presets.cfg ]; then
+            sed -n '1,200p' export_presets.cfg || true
+          else
+            echo "ERROR: export_presets.cfg is missing"
+            exit 1
+          fi
+          echo "========== Available export platforms (verbose Godot) =========="
+          ./godot-bin/Godot_v4.4.1-stable_linux.x86_64 \
+            --headless \
+            --path . \
+            --editor \
+            --quit \
+            --verbose
+
+      - name: Ensure export preset 'Android' exists
+        run: |
+          set -e
+          # Godot export_presets.cfg usually contains lines like name="Android"
+          grep -n 'name="Android"' export_presets.cfg || { echo "Export preset 'Android' not found in export_presets.cfg. Please ensure the preset name is exactly 'Android' or update this workflow accordingly."; exit 1; }
+
+      - name: Export Android APK with detailed logging
+        run: |
+          set -o pipefail
+          GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
+          mkdir -p build
+          "$GODOT" \
+            --headless \
+            --path . \
+            --verbose \
+            --export-debug \
+            "Android" \
+            "build/VelocityRush3D.apk" \
+            2>&1 | tee build/export-log.txt
+
+      - name: Upload diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velocity-Rush-Build-Logs
+          path: build/export-log.txt
+          if-no-files-found: ignore
+
+      - name: Verify APK
+        if: success()
+        run: |
+          set -e
+          test -s build/VelocityRush3D.apk
+          ls -lh build/VelocityRush3D.apk
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velocity-Rush-3D-APK
+          path: build/VelocityRush3D.apk
+          if-no-files-found: error
+          retention-days: 7
