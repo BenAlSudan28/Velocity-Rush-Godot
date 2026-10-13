@@ -158,9 +158,19 @@ jobs:
           print("ETC2/ASTC enabled in project.godot")
           PY
 
-      - name: Import Godot project
+      - name: Import and validate Godot project
         run: |
-          "$GODOT_BIN" --headless --path . --import || echo "Import finished with a non-zero exit code, continuing..."
+          set -o pipefail
+          "$GODOT_BIN" --headless --path . --import 2>&1 | tee godot-import.log
+          if grep -E "SCRIPT ERROR|Parse Error|ERROR:" godot-import.log; then
+            echo "::error::Godot reported project import or script errors. Fix these before exporting the APK."
+            exit 1
+          fi
+          "$GODOT_BIN" --headless --path . --quit-after 3 2>&1 | tee godot-runtime-check.log
+          if grep -E "SCRIPT ERROR|Parse Error|ERROR:" godot-runtime-check.log; then
+            echo "::error::Godot reported errors while starting the main scene."
+            exit 1
+          fi
 
       - name: Export Android APK
         run: |
