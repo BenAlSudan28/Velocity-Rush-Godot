@@ -159,16 +159,17 @@ jobs:
           PY
 
       - name: Import and validate Godot project
+        shell: bash
         run: |
           set -o pipefail
-          "$GODOT_BIN" --headless --path . --import 2>&1 | tee godot-import.log
-          if grep -E "SCRIPT ERROR|Parse Error|ERROR:" godot-import.log; then
-            echo "::error::Godot reported project import or script errors. Fix these before exporting the APK."
-            exit 1
-          fi
-          "$GODOT_BIN" --headless --path . --quit-after 3 2>&1 | tee godot-runtime-check.log
-          if grep -E "SCRIPT ERROR|Parse Error|ERROR:" godot-runtime-check.log; then
-            echo "::error::Godot reported errors while starting the main scene."
+          LOG_FILE="godot-validation.log"
+
+          # Import resources, then load the project in editor mode so script
+          # parse errors are visible before APK export.
+          "$GODOT_BIN" --headless --path . --editor --import --quit 2>&1 | tee "$LOG_FILE"
+
+          if grep -Eiq 'SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR: Failed to load' "$LOG_FILE"; then
+            echo "::error::Godot reported script or project errors. See the log above."
             exit 1
           fi
 
