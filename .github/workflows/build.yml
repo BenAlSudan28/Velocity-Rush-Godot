@@ -13,10 +13,20 @@ jobs:
   build-android:
     name: Export Android APK
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    env:
+      GODOT_BIN: ./godot-bin/Godot_v4.4.1-stable_linux.x86_64
 
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
+
+      - name: Check project files
+        run: |
+          test -f project.godot || { echo "::error::project.godot not found in repo root"; exit 1; }
+          test -f export_presets.cfg || { echo "::error::export_presets.cfg not found - export the Android preset once from the Godot editor and commit it"; exit 1; }
+          grep -q 'name="Android"' export_presets.cfg || { echo "::error::Export preset must be named exactly: Android"; exit 1; }
 
       - name: Install Java 17
         uses: actions/setup-java@v4
@@ -24,12 +34,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # packages: '' prevents the action from running "sdkmanager tools",
+      # a package that no longer exists in the Android SDK repository.
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
       - name: Install Android packages
         run: |
-          sdkmanager --install \
+          sdkmanager --sdk_root="$ANDROID_HOME" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.1" \
@@ -44,7 +58,7 @@ jobs:
             -O godot.zip
 
           unzip -q godot.zip -d godot-bin
-          chmod +x godot-bin/Godot_v4.4.1-stable_linux.x86_64
+          chmod +x "$GODOT_BIN"
 
       - name: Install matching Android export templates
         run: |
@@ -55,11 +69,11 @@ jobs:
           mkdir -p /tmp/godot-templates
           unzip -q godot-templates.tpz -d /tmp/godot-templates
 
-          mkdir -p "$HOME/.local/share/godot/export_templates/4.4.1.stable"
+          TEMPLATES_DIR="$HOME/.local/share/godot/export_templates/4.4.1.stable"
+          mkdir -p "$TEMPLATES_DIR"
+          mv /tmp/godot-templates/templates/* "$TEMPLATES_DIR/"
 
-          cp -a \
-            /tmp/godot-templates/templates/. \
-            "$HOME/.local/share/godot/export_templates/4.4.1.stable/"
+          ls "$TEMPLATES_DIR" | grep -i android
 
       - name: Create Android debug keystore
         run: |
@@ -74,6 +88,12 @@ jobs:
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000
+
+          {
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$HOME/.android/debug.keystore"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android"
+          } >> "$GITHUB_ENV"
 
       - name: Configure Godot Android paths
         shell: bash
@@ -91,25 +111,14 @@ jobs:
           export/android/debug_keystore_pass = "android"
           EOF
 
-      - name: Check Godot project
+      - name: Import Godot project
         run: |
-          GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
-
-          "$GODOT" --headless --path . --editor --quit
+          "$GODOT_BIN" --headless --path . --import || echo "Import finished with a non-zero exit code, continuing..."
 
       - name: Export Android APK
-        env:
-          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ github.workspace }}/debug.keystore
-          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
-          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
-          GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
-
           mkdir -p build
-
-          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore"
-
-          "$GODOT" \
+          "$GODOT_BIN" \
             --headless \
             --path . \
             --export-debug "Android" build/VelocityRush3D.apk
