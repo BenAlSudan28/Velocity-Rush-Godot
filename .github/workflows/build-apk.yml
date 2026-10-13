@@ -2,6 +2,7 @@ name: Build Velocity Rush 3D APK
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - main
@@ -11,58 +12,91 @@ permissions:
 
 jobs:
   build-android:
-    name: Export Android APK
+    name: Build Android APK
     runs-on: ubuntu-22.04
 
     steps:
+      # 1. Download the repository
       - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install Java 17
+      # 2. Install Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
+      # 3. Setup Android SDK without the obsolete tools package
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools"
 
-      - name: Install Android packages
+      # 4. Install required Android SDK packages explicitly
+      - name: Install Android SDK packages
         run: |
+          set -e
+
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
-            "build-tools;35.0.1" \
-            "cmdline-tools;latest" \
-            "cmake;3.10.2.4988404" \
-            "ndk;28.1.13356709"
+            "build-tools;35.0.0"
 
+      # 5. Verify SDK installation
+      - name: Verify Android SDK
+        run: |
+          set -e
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME"
+
+          sdkmanager --list_installed
+
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+
+      # 6. Download Godot
       - name: Download Godot 4.4.1
         run: |
+          set -e
+
           wget -q \
-            https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip \
+            "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip" \
             -O godot.zip
 
           unzip -q godot.zip -d godot-bin
-          chmod +x godot-bin/Godot_v4.4.1-stable_linux.x86_64
 
-      - name: Install matching Android export templates
+          chmod +x \
+            godot-bin/Godot_v4.4.1-stable_linux.x86_64
+
+      # 7. Download matching Godot export templates
+      - name: Install Godot export templates
         run: |
+          set -e
+
           wget -q \
-            https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_export_templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_export_templates.tpz" \
             -O godot-templates.tpz
 
           mkdir -p /tmp/godot-templates
-          unzip -q godot-templates.tpz -d /tmp/godot-templates
 
-          mkdir -p "$HOME/.local/share/godot/export_templates/4.4.1.stable"
+          unzip -q \
+            godot-templates.tpz \
+            -d /tmp/godot-templates
+
+          mkdir -p \
+            "$HOME/.local/share/godot/export_templates/4.4.1.stable"
 
           cp -a \
             /tmp/godot-templates/templates/. \
             "$HOME/.local/share/godot/export_templates/4.4.1.stable/"
 
+      # 8. Create debug signing key
       - name: Create Android debug keystore
         run: |
+          set -e
+
           mkdir -p "$HOME/.android"
 
           keytool -genkeypair \
@@ -75,9 +109,12 @@ jobs:
             -keysize 2048 \
             -validity 10000
 
-      - name: Configure Godot Android paths
+      # 9. Configure Godot Android paths
+      - name: Configure Godot export settings
         shell: bash
         run: |
+          set -e
+
           mkdir -p "$HOME/.config/godot"
 
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
@@ -91,37 +128,52 @@ jobs:
           export/android/debug_keystore_pass = "android"
           EOF
 
-      - name: Check Godot project
+      # 10. Import and validate the project
+      - name: Validate Godot project
         run: |
+          set -e
+
           GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
 
-          "$GODOT" --headless --path . --editor --quit
+          "$GODOT" \
+            --headless \
+            --editor \
+            --path . \
+            --quit
 
+      # 11. Export APK
       - name: Export Android APK
-        env:
-          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ github.workspace }}/debug.keystore
-          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
-          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
+          set -e
+
           GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
 
           mkdir -p build
 
-          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore"
-
           "$GODOT" \
             --headless \
             --path . \
-            --export-debug "Android" build/VelocityRush3D.apk
+            --export-debug \
+            "Android" \
+            "build/VelocityRush3D.apk"
 
+      # 12. Verify the APK exists
       - name: Verify APK
         run: |
-          test -s build/VelocityRush3D.apk
+          set -e
+
+          if [ ! -s "build/VelocityRush3D.apk" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
           ls -lh build/VelocityRush3D.apk
 
-      - name: Upload APK
+      # 13. Upload the APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: Velocity-Rush-3D-APK
           path: build/VelocityRush3D.apk
           if-no-files-found: error
+          retention-days: 7
