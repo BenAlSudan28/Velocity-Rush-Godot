@@ -2,7 +2,6 @@ name: Build Velocity Rush 3D APK
 
 on:
   workflow_dispatch:
-
   push:
     branches:
       - main
@@ -16,24 +15,20 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # 1. Download the repository
       - name: Checkout project
         uses: actions/checkout@v4
 
-      # 2. Install Java
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # 3. Setup Android SDK without the obsolete tools package
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: "platform-tools"
 
-      # 4. Install required Android SDK packages explicitly
       - name: Install Android SDK packages
         run: |
           set -e
@@ -43,20 +38,6 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      # 5. Verify SDK installation
-      - name: Verify Android SDK
-        run: |
-          set -e
-
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "JAVA_HOME=$JAVA_HOME"
-
-          sdkmanager --list_installed
-
-          test -d "$ANDROID_HOME/platforms/android-35"
-          test -d "$ANDROID_HOME/build-tools/35.0.0"
-
-      # 6. Download Godot
       - name: Download Godot 4.4.1
         run: |
           set -e
@@ -67,10 +48,8 @@ jobs:
 
           unzip -q godot.zip -d godot-bin
 
-          chmod +x \
-            godot-bin/Godot_v4.4.1-stable_linux.x86_64
+          chmod +x godot-bin/Godot_v4.4.1-stable_linux.x86_64
 
-      # 7. Download matching Godot export templates
       - name: Install Godot export templates
         run: |
           set -e
@@ -81,9 +60,7 @@ jobs:
 
           mkdir -p /tmp/godot-templates
 
-          unzip -q \
-            godot-templates.tpz \
-            -d /tmp/godot-templates
+          unzip -q godot-templates.tpz -d /tmp/godot-templates
 
           mkdir -p \
             "$HOME/.local/share/godot/export_templates/4.4.1.stable"
@@ -92,7 +69,6 @@ jobs:
             /tmp/godot-templates/templates/. \
             "$HOME/.local/share/godot/export_templates/4.4.1.stable/"
 
-      # 8. Create debug signing key
       - name: Create Android debug keystore
         run: |
           set -e
@@ -109,9 +85,7 @@ jobs:
             -keysize 2048 \
             -validity 10000
 
-      # 9. Configure Godot Android paths
-      - name: Configure Godot export settings
-        shell: bash
+      - name: Configure Godot Android paths
         run: |
           set -e
 
@@ -128,23 +102,39 @@ jobs:
           export/android/debug_keystore_pass = "android"
           EOF
 
-      # 10. Import and validate the project
       - name: Validate Godot project
         run: |
           set -e
 
           GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
 
-          "$GODOT" \
-            --headless \
-            --editor \
-            --path . \
-            --quit
+          "$GODOT" --headless --editor --path . --quit
 
-      # 11. Export APK
-      - name: Export Android APK
+      - name: Inspect Android export preset
         run: |
           set -e
+
+          echo "========== export_presets.cfg =========="
+
+          if [ -f export_presets.cfg ]; then
+            cat export_presets.cfg
+          else
+            echo "ERROR: export_presets.cfg is missing"
+            exit 1
+          fi
+
+          echo "========== Available export platforms =========="
+
+          ./godot-bin/Godot_v4.4.1-stable_linux.x86_64 \
+            --headless \
+            --path . \
+            --editor \
+            --quit \
+            --verbose
+
+      - name: Export Android APK with detailed logging
+        run: |
+          set -o pipefail
 
           GODOT="./godot-bin/Godot_v4.4.1-stable_linux.x86_64"
 
@@ -153,24 +143,31 @@ jobs:
           "$GODOT" \
             --headless \
             --path . \
+            --verbose \
             --export-debug \
             "Android" \
-            "build/VelocityRush3D.apk"
+            "build/VelocityRush3D.apk" \
+            2>&1 | tee build/export-log.txt
 
-      # 12. Verify the APK exists
+      - name: Upload diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velocity-Rush-Build-Logs
+          path: build/export-log.txt
+          if-no-files-found: ignore
+
       - name: Verify APK
+        if: success()
         run: |
           set -e
 
-          if [ ! -s "build/VelocityRush3D.apk" ]; then
-            echo "ERROR: APK was not generated."
-            exit 1
-          fi
+          test -s build/VelocityRush3D.apk
 
           ls -lh build/VelocityRush3D.apk
 
-      # 13. Upload the APK
-      - name: Upload APK artifact
+      - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Velocity-Rush-3D-APK
