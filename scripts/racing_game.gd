@@ -33,10 +33,14 @@ var restart_button: Button
 var nitro_button: Button
 
 var ui_layer: CanvasLayer
+var hud_root: Control
+var main_menu: Control
+var race_started: bool = false
 
 
 func _ready() -> void:
     randomize()
+    print("Velocity Rush 3D: initializing race scene")
 
     _create_environment()
     _create_road()
@@ -44,12 +48,17 @@ func _ready() -> void:
     _create_opponents()
     _create_camera()
     _create_ui()
+    _create_main_menu()
 
+    race_started = false
+    hud_root.visible = false
+    main_menu.visible = true
     _update_hud()
+    print("Velocity Rush 3D: scene initialized successfully")
 
 
 func _process(delta: float) -> void:
-    if paused or crashed:
+    if not race_started or paused or crashed:
         return
 
     _update_speed(delta)
@@ -418,7 +427,7 @@ func _create_opponents() -> void:
         opponent.position = Vector3(
             _random_lane(),
             0.0,
-            -45.0 - float(index) * 32.0
+            -95.0 - float(index) * 42.0
         )
 
         opponent_cars.append(opponent)
@@ -475,10 +484,12 @@ func _handle_collision() -> void:
 func _create_camera() -> void:
     camera = Camera3D.new()
     camera.position = Vector3(0.0, 5.5, 9.0)
-    camera.current = true
     camera.fov = 72.0
+    camera.near = 0.05
+    camera.far = 500.0
 
     add_child(camera)
+    camera.current = true
 
     camera.look_at(
         Vector3(0.0, 1.0, -12.0),
@@ -526,7 +537,9 @@ func _create_ui() -> void:
     add_child(ui_layer)
 
     var root := Control.new()
+    root.name = "RaceHUD"
     root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    hud_root = root
     ui_layer.add_child(root)
 
     hud_label = _make_label(
@@ -631,6 +644,108 @@ func _create_ui() -> void:
 
     restart_button.pressed.connect(_restart_race)
     restart_button.visible = false
+
+
+func _create_main_menu() -> void:
+    main_menu = Control.new()
+    main_menu.name = "MainMenu"
+    main_menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    ui_layer.add_child(main_menu)
+
+    var backdrop := ColorRect.new()
+    backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    backdrop.color = Color(0.015, 0.035, 0.065, 0.76)
+    backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    main_menu.add_child(backdrop)
+
+    var panel := PanelContainer.new()
+    panel.anchor_left = 0.5
+    panel.anchor_top = 0.5
+    panel.anchor_right = 0.5
+    panel.anchor_bottom = 0.5
+    panel.offset_left = -245.0
+    panel.offset_top = -205.0
+    panel.offset_right = 245.0
+    panel.offset_bottom = 205.0
+
+    var panel_style := StyleBoxFlat.new()
+    panel_style.bg_color = Color(0.025, 0.065, 0.115, 0.97)
+    panel_style.border_color = Color(0.05, 0.65, 1.0, 0.95)
+    panel_style.set_border_width_all(2)
+    panel_style.set_corner_radius_all(24)
+    panel_style.content_margin_left = 28.0
+    panel_style.content_margin_right = 28.0
+    panel_style.content_margin_top = 24.0
+    panel_style.content_margin_bottom = 24.0
+    panel.add_theme_stylebox_override("panel", panel_style)
+    main_menu.add_child(panel)
+
+    var layout := VBoxContainer.new()
+    layout.add_theme_constant_override("separation", 14)
+    panel.add_child(layout)
+
+    var title := Label.new()
+    title.text = "VELOCITY RUSH"
+    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    title.custom_minimum_size = Vector2(0.0, 65.0)
+    title.add_theme_font_size_override("font_size", 36)
+    title.add_theme_color_override("font_color", Color(0.25, 0.82, 1.0))
+    layout.add_child(title)
+
+    var subtitle := Label.new()
+    subtitle.text = "3D STREET RACING"
+    subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    subtitle.add_theme_font_size_override("font_size", 17)
+    subtitle.add_theme_color_override("font_color", Color(0.82, 0.91, 1.0))
+    layout.add_child(subtitle)
+
+    var spacer := Control.new()
+    spacer.custom_minimum_size = Vector2(0.0, 12.0)
+    layout.add_child(spacer)
+
+    var start_button := Button.new()
+    start_button.name = "StartRaceButton"
+    start_button.text = "START RACE"
+    start_button.custom_minimum_size = Vector2(0.0, 64.0)
+    start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    start_button.focus_mode = Control.FOCUS_NONE
+    start_button.add_theme_font_size_override("font_size", 24)
+    start_button.add_theme_color_override("font_color", Color.WHITE)
+
+    var start_style := StyleBoxFlat.new()
+    start_style.bg_color = Color(0.0, 0.42, 0.78, 1.0)
+    start_style.border_color = Color(0.25, 0.82, 1.0, 1.0)
+    start_style.set_border_width_all(2)
+    start_style.set_corner_radius_all(16)
+    start_button.add_theme_stylebox_override("normal", start_style)
+
+    var start_hover := start_style.duplicate() as StyleBoxFlat
+    start_hover.bg_color = Color(0.02, 0.56, 0.92, 1.0)
+    start_button.add_theme_stylebox_override("hover", start_hover)
+
+    var start_pressed := start_style.duplicate() as StyleBoxFlat
+    start_pressed.bg_color = Color(0.02, 0.30, 0.58, 1.0)
+    start_button.add_theme_stylebox_override("pressed", start_pressed)
+    start_button.pressed.connect(_on_start_race_pressed)
+    layout.add_child(start_button)
+
+    var hint := Label.new()
+    hint.text = "STEER  •  BRAKE  •  NITRO"
+    hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    hint.add_theme_font_size_override("font_size", 14)
+    hint.add_theme_color_override("font_color", Color(0.62, 0.76, 0.88))
+    layout.add_child(hint)
+
+
+func _on_start_race_pressed() -> void:
+    race_started = true
+    paused = false
+    crashed = false
+    main_menu.visible = false
+    hud_root.visible = true
+    _update_hud()
+    print("Velocity Rush 3D: race started")
 
 
 func _make_label(
@@ -763,7 +878,7 @@ func _on_nitro_up() -> void:
 
 
 func _toggle_pause() -> void:
-    if crashed:
+    if crashed or not race_started:
         return
 
     paused = not paused
@@ -780,6 +895,9 @@ func _toggle_pause() -> void:
 func _restart_race() -> void:
     crashed = false
     paused = false
+    race_started = true
+    hud_root.visible = true
+    main_menu.visible = false
 
     speed = 28.0
     score = 0.0
@@ -797,7 +915,7 @@ func _restart_race() -> void:
         opponent_cars[index].position = Vector3(
             _random_lane(),
             0.0,
-            -55.0 - float(index) * 35.0
+            -95.0 - float(index) * 42.0
         )
 
     message_label.visible = false
